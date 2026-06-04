@@ -12,34 +12,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     libzip-dev \
     libcurl4-openssl-dev \
+    libonig-dev \
     ffmpeg \
-    && docker-php-ext-install -j"$(nproc)" mysqli pdo_mysql zip \
-    && a2enmod rewrite headers expires remoteip \
+    && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli curl mbstring zip \
+    && a2dismod -f mpm_event mpm_worker >/dev/null 2>&1 || true \
+    && a2enmod mpm_prefork rewrite headers expires remoteip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
-
 WORKDIR /var/www/html
+
 COPY . /var/www/html/
 
-RUN if [ -f composer.json ]; then \
-      composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader; \
-    fi \
+RUN rm -f /var/www/html/includes/.env /var/www/html/.env || true \
     && chown -R www-data:www-data /var/www/html \
     && find /var/www/html -type d -exec chmod 755 {} \; \
     && find /var/www/html -type f -exec chmod 644 {} \;
 
-RUN cat > /usr/local/bin/railway-start <<'EOF_START'
+RUN cat > /usr/local/bin/railway-start <<'EOF'
 #!/bin/sh
 set -e
 
 PORT="${PORT:-8080}"
 
-# Railway mewajibkan service listen ke port yang dikasih lewat env PORT.
+a2dismod -f mpm_event mpm_worker >/dev/null 2>&1 || true
+a2enmod mpm_prefork rewrite headers expires remoteip >/dev/null 2>&1 || true
+
 sed -ri "s/^Listen .*/Listen ${PORT}/" /etc/apache2/ports.conf
 sed -ri "s/<VirtualHost \*:[0-9]+>/<VirtualHost *:${PORT}>/" /etc/apache2/sites-available/000-default.conf
 
-cat > /etc/apache2/conf-available/iptv-security.conf <<'EOF_CONF'
+cat > /etc/apache2/conf-available/railway-security.conf <<'EOF_CONF'
 ServerTokens Prod
 ServerSignature Off
 TraceEnable Off
@@ -50,19 +51,17 @@ TraceEnable Off
     Require all granted
 </Directory>
 
-# Jangan expose file rahasia / source control / dependency manifest.
-<FilesMatch "(^\.env|^\.git|composer\.(json|lock)|package(-lock)?\.json|yarn\.lock|Dockerfile|railway\.json)$">
+<FilesMatch "(^\.env|^\.git|composer\.(json|lock)|package(-lock)?\.json|yarn\.lock|Dockerfile|railway\.json|.*\.sql|.*\.log|.*\.md)$">
     Require all denied
 </FilesMatch>
 
-# Basic hardening header. Streaming tetap jalan karena tidak mengubah Content-Type HLS/MP4.
 Header always set X-Content-Type-Options "nosniff"
 Header always set X-Frame-Options "SAMEORIGIN"
 Header always set Referrer-Policy "no-referrer"
 Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
 EOF_CONF
 
-a2enconf iptv-security >/dev/null 2>&1 || true
+a2enconf railway-security >/dev/null 2>&1 || true
 
 php_ini="$PHP_INI_DIR/conf.d/railway.ini"
 {
@@ -74,10 +73,39 @@ php_ini="$PHP_INI_DIR/conf.d/railway.ini"
   echo "expose_php=Off"
 } > "$php_ini"
 
+# Mapping variable Railway MySQL ke variable app kamu
+if [ -n "$MYSQLHOST" ] && [ -z "$DB_HOST" ]; then
+  export DB_HOST="$MYSQLHOST"
+fi
+
+if [ -n "$MYSQLPORT" ] && [ -z "$DB_PORT" ]; then
+  export DB_PORT="$MYSQLPORT"
+fi
+
+if [ -n "$MYSQLDATABASE" ] && [ -z "$DB_NAME" ]; then
+  export DB_NAME="$MYSQLDATABASE"
+fi
+
+if [ -n "$MYSQLUSER" ] && [ -z "$DB_USER" ]; then
+  export DB_USER="$MYSQLUSER"
+fi
+
+if [ -n "$MYSQLPASSWORD" ] && [ -z "$DB_PASS" ]; then
+  export DB_PASS="$MYSQLPASSWORD"
+fi
+
+# Auto PANEL_URL dari Railway domain
+if [ -n "$RAILWAY_PUBLIC_DOMAIN" ] && [ -z "$PANEL_URL" ]; then
+  export PANEL_URL="https://${RAILWAY_PUBLIC_DOMAIN}"
+fi
+
+apache2ctl configtest
+
 exec apache2-foreground
-EOF_START
+EOF
 
 RUN chmod +x /usr/local/bin/railway-start
 
 EXPOSE 8080
+
 CMD ["railway-start"]
