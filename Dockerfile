@@ -7,7 +7,11 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-install pdo_mysql zip
 
 # Ensure only mpm_prefork is enabled and enable mod_rewrite
-RUN a2dismod mpm_event mpm_worker || true \
+# Completely remove mpm_event and mpm_worker configurations to prevent conflicts
+RUN rm -f /etc/apache2/mods-enabled/mpm_event.conf \
+    && rm -f /etc/apache2/mods-enabled/mpm_event.load \
+    && rm -f /etc/apache2/mods-enabled/mpm_worker.conf \
+    && rm -f /etc/apache2/mods-enabled/mpm_worker.load \
     && a2enmod mpm_prefork rewrite
 
 # Copy all files to the Apache document root
