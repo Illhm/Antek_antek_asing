@@ -19,23 +19,29 @@ function loadEnv($path) {
 }
 loadEnv(__DIR__ . '/.env');
 
-// Fallback to default constants if missing in .env
-defined('DB_HOST') or define('DB_HOST', 'localhost');
-defined('DB_NAME') or define('DB_NAME', 'tipimemy_iptv_panel');
-defined('DB_USER') or define('DB_USER', 'root');
-defined('DB_PASS') or define('DB_PASS', '');
-defined('DB_CHARSET') or define('DB_CHARSET', 'utf8mb4');
+// Helper to get env variable or fallback
+function getEnvOrDefault($key, $default) {
+    $val = getenv($key);
+    return $val !== false ? $val : $default;
+}
 
-defined('PANEL_NAME') or define('PANEL_NAME', 'Tipistream Panel');
-defined('PANEL_URL') or define('PANEL_URL', 'https://ott.tipime.my.id');
-defined('TOKEN_EXPIRE_HOURS') or define('TOKEN_EXPIRE_HOURS', 6);
-defined('SESSION_EXPIRE') or define('SESSION_EXPIRE', 3600);
-defined('FREE_PLAYLIST_URL') or define('FREE_PLAYLIST_URL', 'https://iptv.tipime.my.id/data/playlists/free.m3u');
-defined('SECRET_KEY') or define('SECRET_KEY', 'GANTI_DENGAN_RANDOM_STRING_PANJANG_32CHAR');
-defined('TIMEZONE') or define('TIMEZONE', 'Asia/Jakarta');
-defined('PROXY_EXPIRE_SECONDS') or define('PROXY_EXPIRE_SECONDS', 7200);
-defined('RATE_LIMIT_REQUESTS') or define('RATE_LIMIT_REQUESTS', 300);
-defined('RATE_LIMIT_WINDOW') or define('RATE_LIMIT_WINDOW', 60);
+// Fallback to default constants if missing in .env (or get from system environment variables for Docker/Railway)
+defined('DB_HOST') or define('DB_HOST', getEnvOrDefault('DB_HOST', 'localhost'));
+defined('DB_NAME') or define('DB_NAME', getEnvOrDefault('DB_NAME', 'tipimemy_iptv_panel'));
+defined('DB_USER') or define('DB_USER', getEnvOrDefault('DB_USER', 'root'));
+defined('DB_PASS') or define('DB_PASS', getEnvOrDefault('DB_PASS', ''));
+defined('DB_CHARSET') or define('DB_CHARSET', getEnvOrDefault('DB_CHARSET', 'utf8mb4'));
+
+defined('PANEL_NAME') or define('PANEL_NAME', getEnvOrDefault('PANEL_NAME', 'Tipistream Panel'));
+defined('PANEL_URL') or define('PANEL_URL', getEnvOrDefault('PANEL_URL', 'https://ott.tipime.my.id'));
+defined('TOKEN_EXPIRE_HOURS') or define('TOKEN_EXPIRE_HOURS', (int)getEnvOrDefault('TOKEN_EXPIRE_HOURS', 6));
+defined('SESSION_EXPIRE') or define('SESSION_EXPIRE', (int)getEnvOrDefault('SESSION_EXPIRE', 3600));
+defined('FREE_PLAYLIST_URL') or define('FREE_PLAYLIST_URL', getEnvOrDefault('FREE_PLAYLIST_URL', 'https://iptv.tipime.my.id/data/playlists/free.m3u'));
+defined('SECRET_KEY') or define('SECRET_KEY', getEnvOrDefault('SECRET_KEY', 'GANTI_DENGAN_RANDOM_STRING_PANJANG_32CHAR'));
+defined('TIMEZONE') or define('TIMEZONE', getEnvOrDefault('TIMEZONE', 'Asia/Jakarta'));
+defined('PROXY_EXPIRE_SECONDS') or define('PROXY_EXPIRE_SECONDS', (int)getEnvOrDefault('PROXY_EXPIRE_SECONDS', 7200));
+defined('RATE_LIMIT_REQUESTS') or define('RATE_LIMIT_REQUESTS', (int)getEnvOrDefault('RATE_LIMIT_REQUESTS', 300));
+defined('RATE_LIMIT_WINDOW') or define('RATE_LIMIT_WINDOW', (int)getEnvOrDefault('RATE_LIMIT_WINDOW', 60));
 
 // Ensure HTTPS is used for PANEL_URL
 $panelUrl = PANEL_URL;
