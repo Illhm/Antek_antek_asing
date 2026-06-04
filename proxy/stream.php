@@ -4,8 +4,10 @@
 // Dual-layer: Secret Key + UA Whitelist
 // ============================================
 require_once '../includes/config.php';
+require_once 'security.php';
 
-$ip     = getClientIP();
+$ip     = ProxySecurity::getClientIP();
+$ipPrefix = ProxySecurity::getIpPrefix($ip);
 $ua     = getUA();
 $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
 
@@ -67,9 +69,17 @@ if (strtotime($user['expired_at']) < time()) {
     http_response_code(403); die('Subscription expired.');
 }
 
-$fingerprint = md5($ua . $ip);
+$uaHash = ProxySecurity::getUaHash($ua);
+$deviceFingerprint = ProxySecurity::getDeviceFingerprint($uaHash, $ipPrefix);
+
+// Check Rate Limits
+if (!ProxySecurity::checkRateLimit($user['id'], $deviceFingerprint, $ipPrefix)) {
+    logAccess($user['id'], null, 'rate_limit', "Rate limit exceeded | IP:$ip");
+    http_response_code(429); die('Too Many Requests.');
+}
+
 $stmt = $db->prepare("SELECT * FROM device_sessions WHERE user_id=? AND device_fingerprint=?");
-$stmt->execute([$user['id'], $fingerprint]);
+$stmt->execute([$user['id'], $deviceFingerprint]);
 $device = $stmt->fetch();
 
 if (!$device) {
@@ -80,21 +90,21 @@ if (!$device) {
         http_response_code(403); die('Device limit reached. Max: ' . $user['max_devices']);
     }
     $db->prepare("INSERT INTO device_sessions (user_id,device_fingerprint,ip_address,user_agent) VALUES (?,?,?,?)")
-       ->execute([$user['id'], $fingerprint, $ip, $ua]);
+       ->execute([$user['id'], $deviceFingerprint, $ip, $ua]);
 } else {
     $db->prepare("UPDATE device_sessions SET last_seen=NOW(),ip_address=? WHERE id=?")->execute([$ip, $device['id']]);
 }
 
 // Token
 $stmt = $db->prepare("SELECT * FROM tokens WHERE user_id=? AND device_fingerprint=? AND expires_at > NOW()");
-$stmt->execute([$user['id'], $fingerprint]);
+$stmt->execute([$user['id'], $deviceFingerprint]);
 $tokenRow = $stmt->fetch();
 
 if (!$tokenRow) {
     $token    = generateToken(64);
     $expireAt = date('Y-m-d H:i:s', time() + TOKEN_EXPIRE_HOURS * 3600);
     $db->prepare("INSERT INTO tokens (user_id,token,playlist_id,device_fingerprint,ip_address,user_agent,expires_at) VALUES (?,?,?,?,?,?,?)")
-       ->execute([$user['id'], $token, $user['playlist_id'], $fingerprint, $ip, $ua, $expireAt]);
+       ->execute([$user['id'], $token, $user['playlist_id'], $deviceFingerprint, $ip, $ua, $expireAt]);
     logAccess($user['id'], $token, 'token_generate', "New token: $username");
 } else {
     $token = $tokenRow['token'];
@@ -102,9 +112,9 @@ if (!$tokenRow) {
 
 logAccess($user['id'], $token, 'stream_access', "IP:$ip | UA:" . substr($ua, 0, 80));
 
-// Serve playlist
-$comment = "#EXTM3U\n# Token:" . substr($token,0,16) . " | User:$username | Exp:" . date('d/m/Y H:i', time()+TOKEN_EXPIRE_HOURS*3600) . "\n";
-fetchAndOutputM3U($user['source_url'], $comment);
+// Serve secure playlist
+$comment = "#EXTM3U\n# User:$username | Exp:" . date('d/m/Y H:i', time()+PROXY_EXPIRE_SECONDS) . "\n";
+fetchAndOutputSecureM3U($user['source_url'], $comment, $user['id'], $deviceFingerprint, $ipPrefix, $uaHash);
 
 
 // ============================================
@@ -186,17 +196,23 @@ function checkClientAllowed(string $ua, string $accept): array {
     return ['allowed' => false, 'reason' => 'UA not in whitelist: ' . substr($ua, 0, 80)];
 }
 
-function fetchAndOutputM3U(string $sourceUrl, string $topComment): void {
+function fetchAndOutputSecureM3U(string $sourceUrl, string $topComment, $uid, $deviceFingerprint, $ipPrefix, $uaHash): void {
     $context = stream_context_create(['http' => [
         'timeout' => 10, 'follow_location' => true, 'user_agent' => 'IPTV-Panel-Proxy/1.0',
     ]]);
     $raw = @file_get_contents($sourceUrl, false, $context);
     if ($raw === false) { http_response_code(502); die('Could not fetch source playlist.'); }
+
     header('Content-Type: application/x-mpegURL');
     header('Content-Disposition: attachment; filename="playlist.m3u"');
     header('Cache-Control: no-cache, no-store');
+
     $raw = preg_replace('/^#EXTM3U[^\n]*\n?/', '', $raw, 1);
-    echo $topComment . $raw;
+
+    // Rewrite all URLs to secure proxy URLs
+    $securePlaylist = ProxySecurity::rewritePlaylist($raw, $uid, $deviceFingerprint, $ipPrefix, $uaHash, $sourceUrl);
+
+    echo $topComment . $securePlaylist;
 }
 
 function showTerminalPage(string $ip, string $ua, string $reason = ''): void {
