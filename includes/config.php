@@ -3,6 +3,7 @@
 // IPTV Panel - Configuration
 // ============================================
 
+#$<<<<<<< jules-7723024745216889762-3e6247d4
 // Parse .env file manually (minimal footprint, works without composer)
 function loadEnv($path) {
     if (!file_exists($path)) return;
@@ -18,6 +19,19 @@ function loadEnv($path) {
     }
 }
 loadEnv(__DIR__ . '/.env');
+#=======
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'tipimemy_iptv_panel');
+define('DB_USER', 'tipimemy_iptv');       // Ganti dengan user MySQL Anda
+define('DB_PASS', '');           // Ganti dengan password MySQL Anda
+define('DB_CHARSET', 'utf8mb4');
+
+// Panel settings
+define('PANEL_NAME', 'Tipistream Panel');
+define('PANEL_URL', 'http://ott.tipime.my.id'); // Ganti dengan domain Anda
+define('TOKEN_EXPIRE_HOURS', 6);   // Token stream expired setelah X jam
+define('SESSION_EXPIRE', 3600);    // Admin session expire (detik)
+#>>>>>>> main
 
 // Helper to get env variable or fallback
 function getEnvOrDefault($key, $default) {
