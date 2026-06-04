@@ -1,0 +1,20 @@
+Options -Indexes
+ServerSignature Off
+
+# Block direct access to includes folder
+<FilesMatch "\.(sql|md|txt|log)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Protect config files
+<Files "config.php">
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+# Enable mod_rewrite if needed
+RewriteEngine On
+
+# Redirect direct source file access
+RewriteRule ^includes/ - [F,L]
