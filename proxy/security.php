@@ -155,8 +155,8 @@ class ProxySecurity {
 
         // Cleanup old rate limits
         if (rand(1, 100) === 1) {
-            $db->exec("DELETE FROM rate_limits WHERE reset_at < NOW()");
-            $db->exec("DELETE FROM proxy_mappings WHERE expires_at < NOW()");
+            $db->exec("DELETE FROM rate_limits WHERE reset_at < " . time() . "");
+            $db->exec("DELETE FROM proxy_mappings WHERE expires_at < '" . date('Y-m-d H:i:s') . "'");
         }
 
         $stmt = $db->prepare("SELECT requests, reset_at FROM rate_limits WHERE hash_key = ?");
@@ -164,9 +164,9 @@ class ProxySecurity {
         $row = $stmt->fetch();
 
         if ($row) {
-            if (strtotime($row['reset_at']) < time()) {
+            if ($row['reset_at'] < time()) {
                 // Reset window
-                $resetAt = date('Y-m-d H:i:s', time() + $window);
+                $resetAt = time() + $window;
                 $stmt = $db->prepare("UPDATE rate_limits SET requests = 1, reset_at = ? WHERE hash_key = ?");
                 $stmt->execute([$resetAt, $hashKey]);
                 return true;
@@ -179,7 +179,7 @@ class ProxySecurity {
                 return true;
             }
         } else {
-            $resetAt = date('Y-m-d H:i:s', time() + $window);
+            $resetAt = time() + $window;
             $stmt = $db->prepare("INSERT INTO rate_limits (hash_key, requests, reset_at) VALUES (?, 1, ?)");
             $stmt->execute([$hashKey, $resetAt]);
             return true;
@@ -209,7 +209,7 @@ class ProxySecurity {
         global $db;
         if (!$db) $db = getDB();
 
-        $stmt = $db->prepare("SELECT * FROM proxy_mappings WHERE rid = ? AND expires_at > NOW()");
+        $stmt = $db->prepare("SELECT * FROM proxy_mappings WHERE rid = ? AND expires_at > '" . date('Y-m-d H:i:s') . "'");
         $stmt->execute([$rid]);
         return $stmt->fetch() ?: null;
     }

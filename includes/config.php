@@ -26,11 +26,8 @@ function getEnvOrDefault($key, $default) {
 }
 
 // Fallback to default constants if missing in .env (or get from system environment variables for Docker/Railway)
-defined('DB_HOST') or define('DB_HOST', getEnvOrDefault('DB_HOST', 'localhost'));
-defined('DB_NAME') or define('DB_NAME', getEnvOrDefault('DB_NAME', 'tipimemy_iptv_panel'));
-defined('DB_USER') or define('DB_USER', getEnvOrDefault('DB_USER', 'root'));
-defined('DB_PASS') or define('DB_PASS', getEnvOrDefault('DB_PASS', ''));
-defined('DB_CHARSET') or define('DB_CHARSET', getEnvOrDefault('DB_CHARSET', 'utf8mb4'));
+defined('DB_DRIVER') or define('DB_DRIVER', 'sqlite');
+defined('SQLITE_DB_PATH') or define('SQLITE_DB_PATH', getEnvOrDefault('SQLITE_DB_PATH', '/data/database.sqlite'));
 
 defined('PANEL_NAME') or define('PANEL_NAME', getEnvOrDefault('PANEL_NAME', 'Tipistream Panel'));
 defined('PANEL_URL') or define('PANEL_URL', getEnvOrDefault('PANEL_URL', 'https://ott.tipime.my.id'));
@@ -62,17 +59,76 @@ function getDB(): PDO {
     static $pdo = null;
     if ($pdo === null) {
         try {
-            $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
-            $pdo = new PDO($dsn, DB_USER, DB_PASS, [
-                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES   => false,
-            ]);
+            $dbPath = SQLITE_DB_PATH;
+
+            // Fallback to local db folder if /data doesn't exist and isn't writable
+            $dbDir = dirname($dbPath);
+            if (!is_dir($dbDir) && !@mkdir($dbDir, 0755, true)) {
+                $dbPath = __DIR__ . '/../db/database.sqlite';
+                $dbDir = dirname($dbPath);
+            }
+
+            if (!is_dir($dbDir)) {
+                @mkdir($dbDir, 0755, true);
+            }
+
+            $isNewDb = !file_exists($dbPath);
+
+            $pdo = new PDO("sqlite:" . $dbPath);
+            $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+            $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
+
+            // Enable foreign keys
+            $pdo->exec('PRAGMA foreign_keys = ON;');
+
+            if ($isNewDb) {
+                @chmod($dbPath, 0666);
+            }
+
+            // Bootstrap schema and admin
+            bootstrapDB($pdo);
+
         } catch (PDOException $e) {
+            error_log('Database error: ' . $e->getMessage());
             die(json_encode(['error' => 'Database connection failed']));
         }
     }
     return $pdo;
+}
+
+function bootstrapDB(PDO $pdo): void {
+    // Check if admins table exists
+    $stmt = $pdo->query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='admins'");
+    $tableExists = $stmt->fetchColumn() > 0;
+
+    if (!$tableExists) {
+        // Load and execute schema
+        $schemaPath = __DIR__ . '/../db/schema.sqlite.sql';
+        if (file_exists($schemaPath)) {
+            $sql = file_get_contents($schemaPath);
+            try {
+                $pdo->exec($sql);
+            } catch (PDOException $e) {
+                error_log('Failed to import schema: ' . $e->getMessage());
+            }
+        }
+    }
+
+    // Check if any admin exists
+    $stmt = $pdo->query("SELECT count(*) FROM admins");
+    if ($stmt && $stmt->fetchColumn() == 0) {
+        $username = getEnvOrDefault('ADMIN_USERNAME', 'admin');
+        $password = getEnvOrDefault('ADMIN_PASSWORD', '1');
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+
+        try {
+            $insert = $pdo->prepare("INSERT INTO admins (username, password, email, role) VALUES (?, ?, 'admin@localhost', 'superadmin')");
+            $insert->execute([$username, $hash]);
+        } catch (PDOException $e) {
+            error_log('Failed to create default admin: ' . $e->getMessage());
+        }
+    }
 }
 
 // ============================================

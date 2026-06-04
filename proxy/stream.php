@@ -92,11 +92,11 @@ if (!$device) {
     $db->prepare("INSERT INTO device_sessions (user_id,device_fingerprint,ip_address,user_agent) VALUES (?,?,?,?)")
        ->execute([$user['id'], $deviceFingerprint, $ip, $ua]);
 } else {
-    $db->prepare("UPDATE device_sessions SET last_seen=NOW(),ip_address=? WHERE id=?")->execute([$ip, $device['id']]);
+    $db->prepare("UPDATE device_sessions SET last_seen='" . date('Y-m-d H:i:s') . "',ip_address=? WHERE id=?")->execute([$ip, $device['id']]);
 }
 
 // Token
-$stmt = $db->prepare("SELECT * FROM tokens WHERE user_id=? AND device_fingerprint=? AND expires_at > NOW()");
+$stmt = $db->prepare("SELECT * FROM tokens WHERE user_id=? AND device_fingerprint=? AND expires_at > '" . date('Y-m-d H:i:s') . "'");
 $stmt->execute([$user['id'], $deviceFingerprint]);
 $tokenRow = $stmt->fetch();
 

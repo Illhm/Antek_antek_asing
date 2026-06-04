@@ -7,16 +7,16 @@ $adminId = $_SESSION['admin_id'];
 $role    = $_SESSION['admin_role'];
 
 $whereAdmin  = ($role === 'superadmin') ? 'WHERE 1=1' : "WHERE admin_id = $adminId";
-$whereAdminU = ($role === 'superadmin') ? 'WHERE is_active=1 AND expired_at > NOW()' : "WHERE admin_id=$adminId AND is_active=1 AND expired_at > NOW()";
+$whereAdminU = ($role === 'superadmin') ? "WHERE is_active=1 AND expired_at > '" . date('Y-m-d H:i:s') . "'" : "WHERE admin_id=$adminId AND is_active=1 AND expired_at > '" . date('Y-m-d H:i:s') . "'";
 
 $totalUsers   = $db->query("SELECT COUNT(*) FROM users $whereAdmin")->fetchColumn();
 $activeUsers  = $db->query("SELECT COUNT(*) FROM users $whereAdminU")->fetchColumn();
 $totalLists   = $db->query("SELECT COUNT(*) FROM playlists " . ($whereAdmin ?: "WHERE 1=1"))->fetchColumn();
-$todayLogs    = $db->query("SELECT COUNT(*) FROM access_logs WHERE DATE(created_at)=CURDATE()")->fetchColumn();
-$streamOnline = $db->query("SELECT COUNT(DISTINCT user_id) FROM tokens WHERE expires_at > NOW()")->fetchColumn();
+$todayLogs    = $db->query("SELECT COUNT(*) FROM access_logs WHERE date(created_at) = '" . date('Y-m-d') . "'")->fetchColumn();
+$streamOnline = $db->query("SELECT COUNT(DISTINCT user_id) FROM tokens WHERE expires_at > '" . date('Y-m-d H:i:s') . "'")->fetchColumn();
 
 $logs = $db->query("SELECT l.*, u.username FROM access_logs l LEFT JOIN users u ON l.user_id=u.id ORDER BY l.created_at DESC LIMIT 20")->fetchAll();
-$expiring = $db->query("SELECT u.username, u.expired_at, p.name as playlist FROM users u JOIN playlists p ON u.playlist_id=p.id WHERE u.expired_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 3 DAY) ORDER BY u.expired_at ASC LIMIT 10")->fetchAll();
+$expiring = $db->query("SELECT u.username, u.expired_at, p.name as playlist FROM users u JOIN playlists p ON u.playlist_id=p.id WHERE u.expired_at BETWEEN '" . date('Y-m-d H:i:s') . "' AND '" . date('Y-m-d H:i:s', strtotime('+3 days')) . "' ORDER BY u.expired_at ASC LIMIT 10")->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="id">

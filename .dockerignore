@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+node_modules
+vendor
+*.log
+.DS_Store
+README.md
+
+# Ignore sqlite files but not schema
+db/*.sqlite
+db/*.db
+!db/schema.sqlite.sql
