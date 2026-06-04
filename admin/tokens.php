@@ -12,7 +12,7 @@ if (isset($_GET['revoke'])) {
     redirect('tokens.php');
 }
 if (isset($_GET['cleanup'])) {
-    $db->query("DELETE FROM tokens WHERE expires_at < NOW()");
+    $db->query("DELETE FROM tokens WHERE expires_at < '" . date('Y-m-d H:i:s') . "'");
     redirect('tokens.php?msg=cleanup');
 }
 

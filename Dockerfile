@@ -12,12 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     unzip \
-    default-mysql-client \
     libzip-dev \
     libcurl4-openssl-dev \
     libonig-dev \
     ffmpeg \
-    && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli curl mbstring zip \
+    && docker-php-ext-install -j"$(nproc)" pdo_sqlite mysqli curl mbstring zip \
     && { a2dismod -f mpm_event mpm_worker >/dev/null 2>&1 || true; } \
     && a2enmod mpm_prefork rewrite headers expires remoteip \
     && rm -rf /var/lib/apt/lists/*
@@ -26,12 +25,14 @@ WORKDIR /var/www/html
 
 COPY . /var/www/html/
 
-RUN rm -f /var/www/html/includes/.env /var/www/html/.env || true \
+RUN mkdir -p /data \
+    && chown -R www-data:www-data /data \
+    && rm -f /var/www/html/includes/.env /var/www/html/.env || true \
     && chown -R www-data:www-data /var/www/html \
     && find /var/www/html -type d -exec chmod 755 {} \; \
     && find /var/www/html -type f -exec chmod 644 {} \;
 
-RUN cat > /usr/local/bin/railway-start <<'EOF'
+RUN cat > /usr/local/bin/railway-start <<'START_EOF'
 #!/bin/sh
 set -e
 
@@ -76,153 +77,22 @@ php_ini="$PHP_INI_DIR/conf.d/railway.ini"
   echo "expose_php=Off"
 } > "$php_ini"
 
-# Mapping variable Railway MySQL ke variable app
-if [ -n "$MYSQLHOST" ] && [ -z "$DB_HOST" ]; then
-  export DB_HOST="$MYSQLHOST"
-fi
-
-if [ -n "$MYSQLPORT" ] && [ -z "$DB_PORT" ]; then
-  export DB_PORT="$MYSQLPORT"
-fi
-
-if [ -n "$MYSQLDATABASE" ] && [ -z "$DB_NAME" ]; then
-  export DB_NAME="$MYSQLDATABASE"
-fi
-
-if [ -n "$MYSQLUSER" ] && [ -z "$DB_USER" ]; then
-  export DB_USER="$MYSQLUSER"
-fi
-
-if [ -n "$MYSQLPASSWORD" ] && [ -z "$DB_PASS" ]; then
-  export DB_PASS="$MYSQLPASSWORD"
-fi
-
 # Auto PANEL_URL dari Railway domain
 if [ -n "$RAILWAY_PUBLIC_DOMAIN" ] && [ -z "$PANEL_URL" ]; then
   export PANEL_URL="https://${RAILWAY_PUBLIC_DOMAIN}"
 fi
 
-cat > /tmp/railway-admin-bootstrap.php <<'PHP_BOOTSTRAP'
-<?php
-
-function env_first(array $keys, $default = null) {
-    foreach ($keys as $key) {
-        $value = getenv($key);
-        if ($value !== false && $value !== '') {
-            return $value;
-        }
-    }
-    return $default;
-}
-
-$host = env_first(['DB_HOST', 'MYSQLHOST']);
-$port = env_first(['DB_PORT', 'MYSQLPORT'], '3306');
-$db   = env_first(['DB_NAME', 'MYSQLDATABASE']);
-$user = env_first(['DB_USER', 'MYSQLUSER']);
-$pass = env_first(['DB_PASS', 'MYSQLPASSWORD'], '');
-
-$databaseUrl = getenv('DATABASE_URL');
-if ($databaseUrl && (!$host || !$db || !$user)) {
-    $url = parse_url($databaseUrl);
-    if ($url) {
-        $host = $host ?: ($url['host'] ?? null);
-        $port = $port ?: ($url['port'] ?? '3306');
-        $db   = $db ?: ltrim($url['path'] ?? '', '/');
-        $user = $user ?: ($url['user'] ?? null);
-        $pass = $pass ?: ($url['pass'] ?? '');
-    }
-}
-
-if (!$host || !$db || !$user) {
-    echo "[bootstrap] DB env belum lengkap, skip setup admin.\n";
-    exit(0);
-}
-
-$adminUsername = getenv('ADMIN_USERNAME') ?: 'admin';
-$adminPassword = getenv('ADMIN_PASSWORD') ?: '1';
-
-$dsn = "mysql:host={$host};port={$port};dbname={$db};charset=utf8mb4";
-
-for ($i = 1; $i <= 30; $i++) {
-    try {
-        $pdo = new PDO($dsn, $user, $pass, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::MYSQL_ATTR_MULTI_STATEMENTS => true,
-        ]);
-        break;
-    } catch (Throwable $e) {
-        echo "[bootstrap] Menunggu database... percobaan {$i}/30\n";
-        sleep(2);
-    }
-}
-
-if (!isset($pdo)) {
-    echo "[bootstrap] Gagal konek database, skip setup admin.\n";
-    exit(0);
-}
-
-function admins_table_exists(PDO $pdo): bool {
-    try {
-        $pdo->query("SELECT 1 FROM admins LIMIT 1");
-        return true;
-    } catch (Throwable $e) {
-        return false;
-    }
-}
-
-if (!admins_table_exists($pdo)) {
-    $sqlFile = '/var/www/html/tipimemy_iptv_panel.sql';
-
-    if (is_file($sqlFile)) {
-        echo "[bootstrap] Tabel belum ada, import tipimemy_iptv_panel.sql...\n";
-        $sql = file_get_contents($sqlFile);
-
-        try {
-            $pdo->exec($sql);
-            echo "[bootstrap] Import SQL selesai.\n";
-        } catch (Throwable $e) {
-            echo "[bootstrap] Import SQL gagal: " . $e->getMessage() . "\n";
-        }
-    }
-}
-
-if (!admins_table_exists($pdo)) {
-    echo "[bootstrap] Tabel admins belum tersedia, skip reset admin.\n";
-    exit(0);
-}
-
-$hash = password_hash($adminPassword, PASSWORD_BCRYPT);
-
-$stmt = $pdo->prepare("SELECT id FROM admins WHERE username = ? LIMIT 1");
-$stmt->execute([$adminUsername]);
-$existing = $stmt->fetch();
-
-if ($existing) {
-    $update = $pdo->prepare("UPDATE admins SET password = ?, role = 'superadmin' WHERE id = ?");
-    $update->execute([$hash, $existing['id']]);
-} else {
-    $insert = $pdo->prepare("
-        INSERT INTO admins (id, username, password, email, role, created_at)
-        VALUES (1, ?, ?, 'admin@localhost', 'superadmin', NOW())
-        ON DUPLICATE KEY UPDATE
-            username = VALUES(username),
-            password = VALUES(password),
-            email = VALUES(email),
-            role = VALUES(role)
-    ");
-    $insert->execute([$adminUsername, $hash]);
-}
-
-echo "[bootstrap] Admin siap. Username: {$adminUsername}, Password: {$adminPassword}\n";
-PHP_BOOTSTRAP
-
-php /tmp/railway-admin-bootstrap.php || true
+# Ensure /data exists and is writable in case it was mounted over
+if [ ! -d "/data" ]; then
+    mkdir -p /data
+fi
+chown -R www-data:www-data /data || true
+chmod 755 /data || true
 
 apache2ctl configtest
 
 exec apache2-foreground
-EOF
+START_EOF
 
 RUN chmod +x /usr/local/bin/railway-start
 

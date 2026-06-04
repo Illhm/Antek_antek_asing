@@ -100,7 +100,14 @@ if (isset($_GET['toggle'])) {
 if (isset($_GET['extend']) && isset($_GET['days'])) {
     $id   = (int)$_GET['extend'];
     $days = (int)$_GET['days'];
-    $db->prepare("UPDATE users SET expired_at = DATE_ADD(IF(expired_at > NOW(), expired_at, NOW()), INTERVAL ? DAY) WHERE id=? AND admin_id=?")->execute([$days, $id, $adminId]);
+    $userRow = $db->query("SELECT expired_at FROM users WHERE id=$id AND admin_id=$adminId")->fetch();
+    if ($userRow) {
+        $currentExp = strtotime($userRow['expired_at']);
+        $now = time();
+        $base = ($currentExp > $now) ? $currentExp : $now;
+        $newExp = date('Y-m-d H:i:s', strtotime("+$days days", $base));
+        $db->prepare("UPDATE users SET expired_at = ? WHERE id=? AND admin_id=?")->execute([$newExp, $id, $adminId]);
+    }
     $msg = "Masa aktif diperpanjang $days hari.";
 }
 

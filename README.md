@@ -2,9 +2,9 @@
 
 ## Persyaratan
 - PHP 7.4+ (direkomendasikan PHP 8.0+)
-- MySQL 5.7+ atau MariaDB 10.3+
+- SQLite3
 - Web server Apache/LiteSpeed (shared hosting OK)
-- Ekstensi PHP: PDO, PDO_MySQL, openssl
+- Ekstensi PHP: PDO, PDO_SQLite, openssl
 
 ---
 
@@ -12,33 +12,32 @@
 
 ### 1. Upload File
 Upload seluruh isi folder ke **public_html** atau subfolder hosting kamu via FTP/File Manager.
+Pastikan folder `db/` dapat ditulis (writable) oleh web server (CHMOD 755/777).
 
-### 2. Buat Database
-- Login ke **cPanel → phpMyAdmin**
-- Buat database baru (misal: `iptv_panel`)
-- Import file `database.sql`
+Sistem akan menggunakan SQLite sebagai database:
+- Pada environment container (Docker/Railway), database disimpan di `/data/database.sqlite`.
+- Pada hosting biasa, database disimpan di `db/database.sqlite`.
 
-### 3. Konfigurasi
+**Catatan untuk Railway:** Jika kamu menggunakan Railway, pastikan untuk menambahkan **Volume** pada dashboard Railway dan pasang (mount) ke path `/data` agar data database tidak terhapus saat redeploy.
+
+### 2. Konfigurasi
 Sistem konfigurasi kini menggunakan file `.env` di folder `includes` untuk keamanan tambahan.
 
 1. Salin `includes/.env.example` menjadi `includes/.env`.
 2. Edit file `includes/.env`:
 ```env
-DB_HOST=localhost
-DB_NAME=iptv_panel
-DB_USER=user_mysql
-DB_PASS=password_mysql
 PANEL_URL=https://domain.com/iptv-panel
 SECRET_KEY=GANTI_RANDOM_STRING_32_KARAKTER_ANDA
 PROXY_EXPIRE_SECONDS=7200
 RATE_LIMIT_REQUESTS=300
 RATE_LIMIT_WINDOW=60
 ```
+Tidak perlu mengonfigurasi `DB_HOST`, `DB_USER`, `DB_PASS`, atau database eksternal karena sekarang menggunakan SQLite.
 
-### 4. Login Pertama
+### 3. Login Pertama
 - Buka: `https://domain.com/iptv-panel/`
 - Username: `admin`
-- Password: `password`
+- Password: `1`
 - **⚠️ Segera ganti password setelah login pertama!**
 
 ---
@@ -83,7 +82,9 @@ iptv-panel/
 ├── index.php
 ├── login.php
 ├── logout.php
-├── database.sql
+├── db/
+│   ├── schema.sqlite.sql
+│   └── database.sqlite (terbuat otomatis)
 ├── .htaccess
 ├── includes/
 │   └── config.php
