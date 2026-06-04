@@ -6,8 +6,9 @@ RUN apt-get update && apt-get install -y \
     zip \
     && docker-php-ext-install pdo_mysql zip
 
-# Enable Apache mod_rewrite
-RUN a2enmod rewrite
+# Ensure only mpm_prefork is enabled and enable mod_rewrite
+RUN a2dismod mpm_event mpm_worker || true \
+    && a2enmod mpm_prefork rewrite
 
 # Copy all files to the Apache document root
 COPY . /var/www/html/
