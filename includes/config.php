@@ -6,7 +6,7 @@
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'tipimemy_iptv_panel');
 define('DB_USER', 'tipimemy_iptv');       // Ganti dengan user MySQL Anda
-define('DB_PASS', 'K#*m1~u+[kWyXgO,');           // Ganti dengan password MySQL Anda
+define('DB_PASS', '');           // Ganti dengan password MySQL Anda
 define('DB_CHARSET', 'utf8mb4');
 
 // Panel settings
