@@ -18,6 +18,7 @@ if ($role === 'superadmin') {
 
 // CREATE USER
 if (($_POST['action'] ?? '') === 'create') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
     $uname    = trim($_POST['username'] ?? '');
     $pass     = $_POST['password'] ?? '';
     $plId     = (int)($_POST['playlist_id'] ?? 0);
@@ -37,20 +38,65 @@ if (($_POST['action'] ?? '') === 'create') {
         $expDate = date('Y-m-d H:i:s', time() + $expSeconds);
         $hashed  = password_hash($pass, PASSWORD_DEFAULT);
         try {
-            $streamKey = bin2hex(random_bytes(16));
+            $streamKeyPlain = bin2hex(random_bytes(16));
+            $streamKeyHash = password_hash($streamKeyPlain, PASSWORD_DEFAULT);
             $stmt = $db->prepare("INSERT INTO users (admin_id, username, password, stream_key, playlist_id, max_devices, expired_at, notes) VALUES (?,?,?,?,?,?,?,?)");
-            $stmt->execute([$adminId, $uname, $hashed, $streamKey, $plId, $maxDev, $expDate, $notes]);
+            $stmt->execute([$adminId, $uname, $hashed, $streamKeyHash, $plId, $maxDev, $expDate, $notes]);
             $durationLabel = formatDuration($expDays);
-            $streamUrl = PANEL_URL . '/proxy/stream.php?user=' . urlencode($uname) . '&key=' . $streamKey;
-            $msg = "User <b>$uname</b> berhasil dibuat. Durasi: $durationLabel | Expired: " . date('d/m/Y H:i', strtotime($expDate)) . "<br><b>URL:</b> <code>$streamUrl</code>";
+            $streamUrl = PANEL_URL . '/proxy/stream.php?user=' . urlencode($uname) . '&key=' . $streamKeyPlain;
+            $msg = "User <b>$uname</b> berhasil dibuat. Durasi: $durationLabel | Expired: " . date('d/m/Y H:i', strtotime($expDate)) . "<br><b>URL: (Simpan ini! Tidak bisa dilihat lagi)</b> <code>$streamUrl</code>";
         } catch (PDOException $e) {
             $err = "Username sudah ada.";
         }
     } else { $err = "Username, password, dan playlist wajib diisi."; }
 }
 
+// RESET SESSION
+if (($_POST['action'] ?? '') === 'reset_session') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        die('CSRF token validation failed');
+    }
+    $id = (int)($_POST['user_id'] ?? 0);
+    $db->prepare("DELETE FROM device_sessions WHERE user_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM tokens WHERE user_id=?")->execute([$id]);
+    $msg = "Sesi perangkat dan token aktif berhasil direset.";
+}
+
+// ROTATE KEY
+if (($_POST['action'] ?? '') === 'rotate_key') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        die('CSRF token validation failed');
+    }
+    $id = (int)($_POST['user_id'] ?? 0);
+    $uname = trim($_POST['username'] ?? 'User');
+    $streamKeyPlain = bin2hex(random_bytes(16));
+    $streamKeyHash = password_hash($streamKeyPlain, PASSWORD_DEFAULT);
+    $db->prepare("UPDATE users SET stream_key=? WHERE id=? AND " . ($role === 'superadmin' ? "1=1" : "admin_id=$adminId"))->execute([$streamKeyHash, $id]);
+    $streamUrl = PANEL_URL . '/proxy/stream.php?user=' . urlencode($uname) . '&key=' . $streamKeyPlain;
+    $msg = "Key berhasil dirotasi. <b>URL BARU (Simpan!):</b> <code>$streamUrl</code>";
+}
+
+
+// EXTEND USER
+if (($_POST['action'] ?? '') === 'extend') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
+    $id = (int)$_POST['id'];
+    $days = (int)($_POST['days'] ?? 30);
+    $stmt = $db->prepare("SELECT expired_at FROM users WHERE id=? AND " . ($role === 'superadmin' ? "1=1" : "admin_id=$adminId"));
+    $stmt->execute([$id]);
+    $u = $stmt->fetch();
+    if ($u) {
+        $currentExp = strtotime($u['expired_at']);
+        if ($currentExp < time()) $currentExp = time();
+        $newExp = date('Y-m-d H:i:s', $currentExp + ($days * 86400));
+        $db->prepare("UPDATE users SET expired_at=? WHERE id=?")->execute([$newExp, $id]);
+        $msg = "Masa aktif berhasil ditambah $days hari.";
+    }
+}
+
 // UPDATE USER
 if (($_POST['action'] ?? '') === 'update') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
     $id     = (int)($_POST['user_id'] ?? 0);
     $uname  = trim($_POST['username'] ?? '');
     $pass   = $_POST['password'] ?? '';
@@ -83,8 +129,9 @@ if (($_POST['action'] ?? '') === 'update') {
 }
 
 // DELETE
-if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
+if (($_POST['action'] ?? '') === 'delete') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
+    $id = (int)$_POST['id'];
     $db->prepare("DELETE FROM users WHERE id=? AND admin_id=?")->execute([$id, $adminId]);
     $msg = "User dihapus.";
 }
@@ -163,7 +210,7 @@ $users = $db->query("SELECT u.*, p.name as playlist_name, a.username as admin_na
                 <tbody>
                 <?php foreach ($users as $u):
                     $expired = strtotime($u['expired_at']) < time();
-                    $tokenUrl = PANEL_URL . '/proxy/stream.php?user=' . urlencode($u['username']) . '&key=' . ($u['stream_key'] ?? '');
+                    $tokenUrl = PANEL_URL . '/proxy/stream.php?user=' . urlencode($u['username']) . '&key=[HIDDEN]';
                 ?>
                 <tr class="<?= $expired ? 'row-expired' : '' ?>">
                     <td>
@@ -199,8 +246,32 @@ $users = $db->query("SELECT u.*, p.name as playlist_name, a.username as admin_na
                         <div class="btn-group-table">
                             <button type="button" class="btn btn-sm btn-info" onclick="toggleModal('modal-detail-<?= $u['id'] ?>')">Detail</button>
                             <button type="button" class="btn btn-sm btn-primary" onclick="toggleModal('modal-edit-<?= $u['id'] ?>')">Edit</button>
-                            <a href="?extend=<?= $u['id'] ?>&days=30" class="btn btn-sm btn-success" title="+30 hari">+30h</a>
-                            <a href="?delete=<?= $u['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Hapus user <?= sanitize($u['username']) ?>?')">Del</a>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
+                                <input type="hidden" name="action" value="extend">
+                                <input type="hidden" name="id" value="<?= $u['id'] ?>">
+                                <input type="hidden" name="days" value="30">
+                                <button type="submit" class="btn btn-sm btn-success" title="+30 hari">+30h</button>
+                            </form>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
+                                <input type="hidden" name="action" value="reset_session">
+                                <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-info" onclick="return confirm('Reset sesi aktif user ini?')">Rst Sesi</button>
+                            </form>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
+                                <input type="hidden" name="action" value="rotate_key">
+                                <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
+                                <input type="hidden" name="username" value="<?= sanitize($u['username']) ?>">
+                                <button type="submit" class="btn btn-sm btn-warning" onclick="return confirm('Generate key baru? URL lama akan mati.')">Rot Key</button>
+                            </form>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="id" value="<?= $u['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Hapus user <?= sanitize($u['username']) ?>?')">Del</button>
+                            </form>
                         </div>
                     </td>
                 </tr>
@@ -258,6 +329,7 @@ $users = $db->query("SELECT u.*, p.name as playlist_name, a.username as admin_na
             <button onclick="toggleModal('modal-edit-<?= $u['id'] ?>')" class="modal-close">✕</button>
         </div>
         <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
             <input type="hidden" name="action" value="update">
             <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
             <div class="form-group">
@@ -308,6 +380,7 @@ $users = $db->query("SELECT u.*, p.name as playlist_name, a.username as admin_na
             <button onclick="toggleModal('modal-add')" class="modal-close">✕</button>
         </div>
         <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
             <input type="hidden" name="action" value="create">
             <div class="form-group">
                 <label>Username *</label>
