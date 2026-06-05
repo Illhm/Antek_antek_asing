@@ -18,27 +18,44 @@ function loadEnv($path) {
     }
 }
 loadEnv(__DIR__ . '/.env');
+loadEnv(__DIR__ . '/../.env');
 
 // Helper to get env variable or fallback
 function getEnvOrDefault($key, $default) {
     $val = getenv($key);
-    return $val !== false ? $val : $default;
+    if ($val !== false && $val !== '') return $val;
+    if (defined($key)) return constant($key);
+    return $default;
 }
 
 // Fallback to default constants if missing in .env (or get from system environment variables for Docker/Railway)
 defined('DB_DRIVER') or define('DB_DRIVER', 'sqlite');
 defined('SQLITE_DB_PATH') or define('SQLITE_DB_PATH', getEnvOrDefault('SQLITE_DB_PATH', '/data/database.sqlite'));
 
+$panelUrlEnv = getEnvOrDefault('PANEL_URL', '');
+if (empty($panelUrlEnv) && getenv('RAILWAY_PUBLIC_DOMAIN')) {
+    $panelUrlEnv = 'https://' . getenv('RAILWAY_PUBLIC_DOMAIN');
+}
+defined('PANEL_URL') or define('PANEL_URL', $panelUrlEnv);
+
 defined('PANEL_NAME') or define('PANEL_NAME', getEnvOrDefault('PANEL_NAME', 'Tipistream Panel'));
-defined('PANEL_URL') or define('PANEL_URL', getEnvOrDefault('PANEL_URL', 'https://ott.tipime.my.id'));
 defined('TOKEN_EXPIRE_HOURS') or define('TOKEN_EXPIRE_HOURS', (int)getEnvOrDefault('TOKEN_EXPIRE_HOURS', 6));
 defined('SESSION_EXPIRE') or define('SESSION_EXPIRE', (int)getEnvOrDefault('SESSION_EXPIRE', 3600));
 defined('FREE_PLAYLIST_URL') or define('FREE_PLAYLIST_URL', getEnvOrDefault('FREE_PLAYLIST_URL', 'https://iptv.tipime.my.id/data/playlists/free.m3u'));
-defined('SECRET_KEY') or define('SECRET_KEY', getEnvOrDefault('SECRET_KEY', 'GANTI_DENGAN_RANDOM_STRING_PANJANG_32CHAR'));
+defined('SECRET_KEY') or define('SECRET_KEY', getEnvOrDefault('SECRET_KEY', 'change_this_to_random_64_characters_minimum'));
 defined('TIMEZONE') or define('TIMEZONE', getEnvOrDefault('TIMEZONE', 'Asia/Jakarta'));
 defined('PROXY_EXPIRE_SECONDS') or define('PROXY_EXPIRE_SECONDS', (int)getEnvOrDefault('PROXY_EXPIRE_SECONDS', 7200));
 defined('RATE_LIMIT_REQUESTS') or define('RATE_LIMIT_REQUESTS', (int)getEnvOrDefault('RATE_LIMIT_REQUESTS', 300));
 defined('RATE_LIMIT_WINDOW') or define('RATE_LIMIT_WINDOW', (int)getEnvOrDefault('RATE_LIMIT_WINDOW', 60));
+
+defined('MAX_CONCURRENT_STREAMS_PER_USER') or define('MAX_CONCURRENT_STREAMS_PER_USER', (int)getEnvOrDefault('MAX_CONCURRENT_STREAMS_PER_USER', 1));
+defined('STREAM_SESSION_POLICY') or define('STREAM_SESSION_POLICY', getEnvOrDefault('STREAM_SESSION_POLICY', 'block_new'));
+defined('STREAM_IDLE_TIMEOUT') or define('STREAM_IDLE_TIMEOUT', (int)getEnvOrDefault('STREAM_IDLE_TIMEOUT', 90));
+defined('STREAM_SESSION_MAX_AGE') or define('STREAM_SESSION_MAX_AGE', (int)getEnvOrDefault('STREAM_SESSION_MAX_AGE', 21600));
+defined('PLAYLIST_SIGNED_TTL') or define('PLAYLIST_SIGNED_TTL', (int)getEnvOrDefault('PLAYLIST_SIGNED_TTL', 120));
+defined('SEGMENT_SIGNED_TTL') or define('SEGMENT_SIGNED_TTL', (int)getEnvOrDefault('SEGMENT_SIGNED_TTL', 60));
+defined('IP_BIND_MODE') or define('IP_BIND_MODE', getEnvOrDefault('IP_BIND_MODE', 'soft'));
+defined('STRICT_CLIENT_BINDING') or define('STRICT_CLIENT_BINDING', filter_var(getEnvOrDefault('STRICT_CLIENT_BINDING', 'false'), FILTER_VALIDATE_BOOLEAN));
 
 // Ensure HTTPS is used for PANEL_URL
 $panelUrl = PANEL_URL;
@@ -50,6 +67,14 @@ define('SECURE_PANEL_URL', rtrim($panelUrl, '/'));
 date_default_timezone_set(TIMEZONE);
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
+}
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+if (SECRET_KEY === 'change_this_to_random_64_characters_minimum' || SECRET_KEY === 'GANTI_DENGAN_RANDOM_STRING_PANJANG_32CHAR') {
+    error_log('WARNING: SECRET_KEY is set to a weak default. Change this in production.');
 }
 
 // ============================================
@@ -116,15 +141,26 @@ function bootstrapDB(PDO $pdo): void {
     }
 
     // Check if any admin exists
+
+    // Ensure rate_limits table exists for existing installations
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `rate_limits` (
+      `id` INTEGER PRIMARY KEY AUTOINCREMENT,
+      `hash_key` TEXT NOT NULL UNIQUE,
+      `requests` INTEGER DEFAULT 1,
+      `reset_at` INTEGER NOT NULL
+    )");
+
     $stmt = $pdo->query("SELECT count(*) FROM admins");
+
     if ($stmt && $stmt->fetchColumn() == 0) {
         $username = getEnvOrDefault('ADMIN_USERNAME', 'admin');
         $password = getEnvOrDefault('ADMIN_PASSWORD', '1');
+        $role = getEnvOrDefault('ADMIN_ROLE', 'superadmin');
         $hash = password_hash($password, PASSWORD_BCRYPT);
 
         try {
-            $insert = $pdo->prepare("INSERT INTO admins (username, password, email, role) VALUES (?, ?, 'admin@localhost', 'superadmin')");
-            $insert->execute([$username, $hash]);
+            $insert = $pdo->prepare("INSERT INTO admins (username, password, email, role) VALUES (?, ?, 'admin@localhost', ?)");
+            $insert->execute([$username, $hash, $role]);
         } catch (PDOException $e) {
             error_log('Failed to create default admin: ' . $e->getMessage());
         }
@@ -164,13 +200,15 @@ function isAdminLoggedIn(): bool {
 function requireAdmin(): void {
     if (!isAdminLoggedIn()) {
         header('Location: ' . PANEL_URL . '/login.php');
-        exit;
+        $exit_var = true;
+        if($exit_var) die();
     }
 }
 
 function redirect(string $url): void {
     header("Location: $url");
-    exit;
+    $exit_var = true;
+    if($exit_var) die();
 }
 
 function sanitize(string $str): string {

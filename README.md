@@ -1,106 +1,39 @@
-# IPTV Panel - Panduan Instalasi
+# Antek_antek_asing
 
-## Persyaratan
-- PHP 7.4+ (direkomendasikan PHP 8.0+)
-- SQLite3
-- Web server Apache/LiteSpeed (shared hosting OK)
-- Ekstensi PHP: PDO, PDO_SQLite, openssl
+A high-performance PHP IPTV proxy panel leveraging SQLite as its primary database. Ideal for self-hosting on Railway or any environment supporting PHP 8.2 and Apache.
 
----
+## Deployment
 
-## Langkah Instalasi
+Deploy this project on [Railway](https://railway.app/).
 
-### 1. Upload File
-Upload seluruh isi folder ke **public_html** atau subfolder hosting kamu via FTP/File Manager.
-Pastikan folder `db/` dapat ditulis (writable) oleh web server (CHMOD 755/777).
+Set the following Environment Variables during deployment:
 
-Sistem akan menggunakan SQLite sebagai database:
-- Pada environment container (Docker/Railway), database disimpan di `/data/database.sqlite`.
-- Pada hosting biasa, database disimpan di `db/database.sqlite`.
-
-**Catatan untuk Railway:** Jika kamu menggunakan Railway, pastikan untuk menambahkan **Volume** pada dashboard Railway dan pasang (mount) ke path `/data` agar data database tidak terhapus saat redeploy.
-
-### 2. Konfigurasi
-Sistem konfigurasi kini menggunakan file `.env` di folder `includes` untuk keamanan tambahan.
-
-1. Salin `includes/.env.example` menjadi `includes/.env`.
-2. Edit file `includes/.env`:
 ```env
-PANEL_URL=https://domain.com/iptv-panel
-SECRET_KEY=GANTI_RANDOM_STRING_32_KARAKTER_ANDA
-PROXY_EXPIRE_SECONDS=7200
-RATE_LIMIT_REQUESTS=300
-RATE_LIMIT_WINDOW=60
+PANEL_NAME=Tipistream Panel
+PANEL_URL=
+TIMEZONE=Asia/Jakarta
+SQLITE_DB_PATH=/data/database.sqlite
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=1
+ADMIN_ROLE=superadmin
+SECRET_KEY=PUT_RANDOM_SECRET_HERE
+MAX_CONCURRENT_STREAMS_PER_USER=1
+STREAM_SESSION_POLICY=block_new
+STREAM_IDLE_TIMEOUT=90
+STREAM_SESSION_MAX_AGE=21600
+PLAYLIST_SIGNED_TTL=120
+SEGMENT_SIGNED_TTL=60
+IP_BIND_MODE=soft
+STRICT_CLIENT_BINDING=false
+FREE_PLAYLIST_URL=https://iptv.tipime.my.id/data/playlists/free.m3u
 ```
-Tidak perlu mengonfigurasi `DB_HOST`, `DB_USER`, `DB_PASS`, atau database eksternal karena sekarang menggunakan SQLite.
 
-### 3. Login Pertama
-- Buka: `https://domain.com/iptv-panel/`
-- Username: `admin`
-- Password: `1`
-- **⚠️ Segera ganti password setelah login pertama!**
+Note: If `PANEL_URL` is empty, it will default to your `RAILWAY_PUBLIC_DOMAIN`.
+Ensure that you change `SECRET_KEY` to a robust string in production environments.
 
----
+## Features
 
-## Cara Penggunaan
-
-### Tambah Playlist
-1. Dashboard → **Playlist M3U** → Tambah Playlist
-2. Masukkan nama dan URL sumber M3U asli kamu
-3. URL sumber tersembunyi dari user
-
-### Buat User
-1. Dashboard → **Kelola User** → Tambah User
-2. Set username, password, pilih playlist, max device, dan durasi
-3. Copy **Token URL** yang dihasilkan → berikan ke pelanggan
-
-### Format URL untuk Pelanggan
-```
-https://domain.com/iptv-panel/proxy/stream.php?user=USERNAME&key=STREAM_KEY
-```
-URL ini yang disebarkan ke pelanggan. Tidak mengekspos source asli.
-
-### Alur Keamanan Baru
-Sistem proxy telah diperbarui secara signifikan untuk mengamankan konten M3U/M3U8:
-1. URL sumber tidak akan pernah muncul di output playlist atau dapat di-sniff menggunakan tools seperti HTTP Canary atau Python.
-2. Setiap item dalam playlist (segment, key, child playlist) akan ditulis ulang dan diarahkan ke `proxy/asset.php`.
-3. URL proksi ini diamankan menggunakan **HMAC Signature** yang divalidasi per-permintaan dengan durasi kedaluwarsa singkat (default: 2 jam).
-4. Signature mengikat data: Username, Hash Device, Prefix IP (/24 untuk IPv4), dan Waktu Kedaluwarsa. URL tidak bisa digunakan di luar lingkungan tersebut.
-5. Tersedia proteksi Rate Limiting di level database untuk menangkal eksploitasi brute-force download segmen.
-6. Memvalidasi `X-Forwarded-For` secara aman, khususnya hanya untuk IP resmi Cloudflare.
-
-### Monitoring
-- **Live Log** → pantau akses real-time, IP, player
-- **Token Aktif** → lihat & cabut token yang aktif
-- **Blokir IP** → tambah IP ke blacklist
-
----
-
-## Struktur Folder
-```
-iptv-panel/
-├── index.php
-├── login.php
-├── logout.php
-├── db/
-│   ├── schema.sqlite.sql
-│   └── database.sqlite (terbuat otomatis)
-├── .htaccess
-├── includes/
-│   └── config.php
-├── admin/
-│   ├── dashboard.php
-│   ├── playlists.php
-│   ├── users.php
-│   ├── tokens.php
-│   ├── logs.php
-│   ├── blocked.php
-│   └── partials/
-│       ├── sidebar.php
-│       └── topbar.php
-├── proxy/
-│   └── stream.php
-└── assets/
-    ├── css/style.css
-    └── js/app.js
-```
+- Lightweight, relying on a robust SQLite database configuration (no MySQL database needed).
+- Deep security implementations mapping and binding user agents and signatures for maximum IPTV Stream control.
+- Integrated Web Dashboard with authentication.
+- Automatically handles new database schemas and a default admin credentials generation mechanism.

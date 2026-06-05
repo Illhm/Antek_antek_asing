@@ -81,6 +81,14 @@ if (!$user || !$user['is_active']) {
     die('User inactive.');
 }
 
+
+// SSRF Protection
+if (!ProxySecurity::isSafeUrl($originalUrl)) {
+    http_response_code(403);
+    die('Invalid source URL.');
+}
+
+
 if (strtotime($user['expired_at']) < time()) {
     http_response_code(403);
     die('Subscription expired.');
@@ -125,83 +133,61 @@ if (strpos($originalUrl, '://') === false) {
 }
 
 // If the content is another playlist (M3U/M3U8), we must rewrite it recursively.
-// Also rewrite MPD manifests if necessary, though it is usually handled differently, we can treat them similarly if they contain URLs.
-if (stripos($contentType, 'mpegurl') !== false || stripos($originalUrl, '.m3u8') !== false || stripos($originalUrl, '.m3u') !== false || stripos($originalUrl, '.mpd') !== false || stripos($contentType, 'dash+xml') !== false) {
-    // We use cURL as default for fetching the manifest to ensure we pass headers correctly
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $originalUrl);
+// Resolve and Validate the URL safely following redirects
+$fetchResult = ProxySecurity::secureFetchUrl($originalUrl);
+if ($fetchResult['error']) {
+    http_response_code($fetchResult['code']); die($fetchResult['message']);
+}
+$safeUrl = $fetchResult['finalUrl'];
+
+// Open the remote stream
+$ch = curl_init($safeUrl);
+curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+curl_setopt($ch, CURLOPT_USERAGENT, 'IPTV-Panel-Proxy/1.0');
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+
+// Also rewrite MPD manifests if necessary
+if (stripos($contentType, 'mpegurl') !== false || stripos($safeUrl, '.m3u8') !== false || stripos($safeUrl, '.m3u') !== false || stripos($safeUrl, '.mpd') !== false || stripos($contentType, 'dash+xml') !== false) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'IPTV-Panel-Proxy/1.0');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     $content = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     if ($content === false || $httpCode >= 400) {
-        // Fallback to file_get_contents if curl fails (very rare but possible due to strange TLS configurations)
-        $content = @file_get_contents($originalUrl, false, $context);
-        if ($content === false && $httpCode >= 400 && $httpCode != 404 && $httpCode != 403) {
-            http_response_code(502);
-            die('Failed to fetch playlist. HTTP Code: ' . $httpCode);
-        }
+        http_response_code(502);
+        die('Failed to fetch playlist. HTTP Code: ' . $httpCode);
     }
 
     header('Content-Type: application/vnd.apple.mpegurl');
     header('Cache-Control: no-cache, no-store');
 
     // Output the recursively rewritten playlist
-    echo ProxySecurity::rewritePlaylist($content, $uid, $storedDeviceFingerprint, $storedIpPrefix, $storedUaHash, $originalUrl);
-    exit;
+    echo ProxySecurity::rewritePlaylist($content, $uid, $storedDeviceFingerprint, $storedIpPrefix, $storedUaHash, $safeUrl);
+    die();
 }
 
-// Otherwise, stream the binary content (TS segment, key, etc.) safely
+// Otherwise, stream the binary content
 header('Content-Type: ' . ($contentType ?: 'application/octet-stream'));
 header('Cache-Control: public, max-age=86400'); // Cache segments
 
-// Open the remote stream
-$fp = @fopen($originalUrl, 'rb', false, $context);
-if (!$fp) {
-    http_response_code(502);
-    die('Failed to open stream.');
-}
-
-// Stream the content through without buffering it all into memory
-if ($fp) {
-    while (!feof($fp)) {
-        echo fread($fp, 8192);
-        ob_flush();
-        flush();
+// Pass headers along
+curl_setopt($ch, CURLOPT_HEADERFUNCTION, function($curl, $header) {
+    if (stripos($header, 'Transfer-Encoding:') === false) {
+        header($header);
     }
-    fclose($fp);
-} else {
-    // cURL Fallback for binary streaming
-    $ch = curl_init($originalUrl);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'IPTV-Panel-Proxy/1.0');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    return strlen($header);
+});
 
-    // Pass headers along, skipping Transfer-Encoding chunked since curl handles it
-    curl_setopt($ch, CURLOPT_HEADERFUNCTION, function($curl, $header) {
-        if (stripos($header, 'Transfer-Encoding:') === false) {
-            header($header);
-        }
-        return strlen($header);
-    });
+// Write body directly to output
+curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($curl, $body) {
+    echo $body;
+    ob_flush();
+    flush();
+    return strlen($body);
+});
 
-    // Write body directly to output
-    curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($curl, $body) {
-        echo $body;
-        ob_flush();
-        flush();
-        return strlen($body);
-    });
-
-    curl_exec($ch);
-    curl_close($ch);
-}
-exit;
+curl_exec($ch);
+curl_close($ch);
+die();

@@ -2,13 +2,17 @@
 .github
 .env
 .env.*
+!.env.example
 node_modules
 vendor
 *.log
 .DS_Store
-README.md
 
 # Ignore sqlite files but not schema
+db/database.sqlite
 db/*.sqlite
+db/*.sqlite-*
 db/*.db
+db/*.db-*
+
 !db/schema.sqlite.sql

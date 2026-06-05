@@ -8,6 +8,7 @@ $role    = $_SESSION['admin_role'];
 $msg = $err = '';
 
 if (($_POST['action'] ?? '') === 'create') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
     $name = trim($_POST['name'] ?? '');
     $url  = trim($_POST['source_url'] ?? '');
     $desc = trim($_POST['description'] ?? '');
@@ -19,6 +20,7 @@ if (($_POST['action'] ?? '') === 'create') {
 }
 
 if (($_POST['action'] ?? '') === 'update') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
     $id   = (int)($_POST['playlist_id'] ?? 0);
     $name = trim($_POST['name'] ?? '');
     $url  = trim($_POST['source_url'] ?? '');
@@ -30,8 +32,9 @@ if (($_POST['action'] ?? '') === 'update') {
     } else { $err = "Nama dan URL wajib diisi."; }
 }
 
-if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
+if (($_POST['action'] ?? '') === 'delete') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
+    $id = (int)$_POST['id'];
     $db->prepare("DELETE FROM playlists WHERE id=? AND (admin_id=? OR ?='superadmin')")->execute([$id, $adminId, $role]);
     $msg = "Playlist dihapus.";
 }
@@ -92,7 +95,12 @@ $playlists = $db->query("SELECT p.*, a.username as admin_name, (SELECT COUNT(*) 
                         <div class="btn-group-table">
                             <button type="button" class="btn btn-sm btn-info" onclick="toggleModal('modal-detail-<?= $p['id'] ?>')">Detail</button>
                             <button type="button" class="btn btn-sm btn-primary" onclick="toggleModal('modal-edit-<?= $p['id'] ?>')">Edit</button>
-                            <a href="?delete=<?= $p['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Hapus playlist ini?')">Hapus</a>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="id" value="<?= $p['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Hapus playlist ini?')">Hapus</button>
+                            </form>
                         </div>
                     </td>
                 </tr>
@@ -139,6 +147,7 @@ $playlists = $db->query("SELECT p.*, a.username as admin_name, (SELECT COUNT(*) 
             <button onclick="toggleModal('modal-edit-<?= $p['id'] ?>')" class="modal-close">✕</button>
         </div>
         <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
             <input type="hidden" name="action" value="update">
             <input type="hidden" name="playlist_id" value="<?= $p['id'] ?>">
             <div class="form-group">
@@ -170,6 +179,7 @@ $playlists = $db->query("SELECT p.*, a.username as admin_name, (SELECT COUNT(*) 
             <button onclick="toggleModal('modal-add')" class="modal-close">✕</button>
         </div>
         <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
             <input type="hidden" name="action" value="create">
             <div class="form-group">
                 <label>Nama Playlist *</label>
