@@ -1,4 +1,10 @@
 .env
+.env.*
+!.env.example
 *.log
+db/database.sqlite
 db/*.sqlite
+db/*.sqlite-*
 db/*.db
+db/*.db-*
+!db/schema.sqlite.sql

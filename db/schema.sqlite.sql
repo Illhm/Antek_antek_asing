@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS `device_sessions` (
   `ip_address` TEXT,
   `user_agent` TEXT,
   `last_seen` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` DATETIME NOT NULL,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   UNIQUE (`user_id`, `device_fingerprint`)

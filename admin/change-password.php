@@ -7,6 +7,7 @@ $adminId = $_SESSION['admin_id'];
 $msg = $err = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
     $current  = $_POST['current_password'] ?? '';
     $new      = $_POST['new_password'] ?? '';
     $confirm  = $_POST['confirm_password'] ?? '';
@@ -57,6 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php if ($err): ?><div class="alert alert-danger"><?= sanitize($err) ?></div><?php endif; ?>
 
             <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
                 <div class="form-group">
                     <label>Password Saat Ini *</label>
                     <div class="input-pw">

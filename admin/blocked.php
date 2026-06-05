@@ -6,6 +6,7 @@ $db = getDB();
 $msg = $err = '';
 
 if (($_POST['action'] ?? '') === 'block') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
     $ip     = trim($_POST['ip'] ?? '');
     $reason = trim($_POST['reason'] ?? '');
     if (filter_var($ip, FILTER_VALIDATE_IP)) {
@@ -16,8 +17,9 @@ if (($_POST['action'] ?? '') === 'block') {
     } else { $err = "Format IP tidak valid."; }
 }
 
-if (isset($_GET['unblock'])) {
-    $id = (int)$_GET['unblock'];
+if (($_POST['action'] ?? '') === 'unblock') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) die('CSRF token validation failed');
+    $id = (int)$_POST['id'];
     $db->prepare("DELETE FROM blocked_ips WHERE id=?")->execute([$id]);
     $msg = "IP berhasil diunblokir.";
 }
@@ -48,6 +50,7 @@ $blocked = $db->query("SELECT * FROM blocked_ips ORDER BY blocked_at DESC")->fet
         <div class="card-header">Tambah IP ke Blacklist</div>
         <div class="card-body">
             <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
                 <input type="hidden" name="action" value="block">
                 <div class="form-row" style="margin-bottom:10px">
                     <div class="form-group" style="margin-bottom:0">
@@ -82,7 +85,14 @@ $blocked = $db->query("SELECT * FROM blocked_ips ORDER BY blocked_at DESC")->fet
                     </td>
                     <td class="hide-mobile text-sm text-muted"><?= sanitize($b['reason'] ?: '—') ?></td>
                     <td class="hide-mobile text-sm text-muted"><?= date('d/m/Y H:i', strtotime($b['blocked_at'])) ?></td>
-                    <td><a href="?unblock=<?= $b['id'] ?>" class="btn btn-sm btn-success">Unblock</a></td>
+                    <td>
+                                <form method="POST" style="display:inline;">
+                                    <input type="hidden" name="csrf_token" value="<?= sanitize($_SESSION['csrf_token']) ?>">
+                                    <input type="hidden" name="action" value="unblock">
+                                    <input type="hidden" name="id" value="<?= $b['id'] ?>">
+                                    <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Hapus blokir untuk IP ini?')">Unblock</button>
+                                </form>
+                            </td>
                 </tr>
                 <?php endforeach; ?>
                 <?php if (empty($blocked)): ?>

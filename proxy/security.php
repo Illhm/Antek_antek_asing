@@ -6,6 +6,95 @@ require_once __DIR__ . '/../includes/config.php';
 
 class ProxySecurity {
 
+    public static function secureFetchUrl($url, $maxRedirects = 5) {
+        $currentUrl = $url;
+        $redirects = 0;
+
+        while ($redirects <= $maxRedirects) {
+            if (!self::isSafeUrl($currentUrl)) {
+                return ['error' => true, 'code' => 403, 'message' => 'Invalid or unsafe source URL encountered.'];
+            }
+
+            $ch = curl_init($currentUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'IPTV-Panel-Proxy/1.0');
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+            curl_close($ch);
+
+            if ($httpCode >= 300 && $httpCode < 400) {
+                $headers = substr($response, 0, $headerSize);
+                if (preg_match('/^Location:\s*(.*)$/mi', $headers, $matches)) {
+                    $redirectUrl = trim($matches[1]);
+                    if (!preg_match('~^(?:f|ht)tps?://~i', $redirectUrl)) {
+                        $parsed = parse_url($currentUrl);
+                        $base = $parsed['scheme'] . '://' . $parsed['host'] . (isset($parsed['port']) ? ':' . $parsed['port'] : '');
+                        if (strpos($redirectUrl, '/') === 0) {
+                            $currentUrl = $base . $redirectUrl;
+                        } else {
+                            $path = isset($parsed['path']) ? $parsed['path'] : '/';
+                            $dir = dirname($path);
+                            // Avoid double slashes
+                            if (substr($dir, -1) !== '/') $dir .= '/';
+                            $currentUrl = $base . $dir . $redirectUrl;
+                        }
+                    } else {
+                        $currentUrl = $redirectUrl;
+                    }
+                    $redirects++;
+                    continue;
+                }
+            }
+
+            return ['error' => false, 'finalUrl' => $currentUrl];
+        }
+
+        return ['error' => true, 'code' => 502, 'message' => 'Too many redirects.'];
+    }
+
+    public static function isSafeUrl($url) {
+        $parsed = parse_url($url);
+        if (!$parsed || !isset($parsed['host']) || !isset($parsed['scheme'])) return false;
+
+        $scheme = strtolower($parsed['scheme']);
+        if ($scheme !== 'http' && $scheme !== 'https') return false;
+
+        $host = $parsed['host'];
+
+        // Resolve IP
+        $ip = gethostbyname($host);
+        if ($ip === $host) {
+            // Check if it's already an IP
+            if (!filter_var($host, FILTER_VALIDATE_IP)) return false;
+        }
+
+        // Check for local/internal/metadata IPs
+        $blockedRanges = [
+            '127.0.0.0/8',
+            '10.0.0.0/8',
+            '172.16.0.0/12',
+            '192.168.0.0/16',
+            '169.254.0.0/16', // Link-local
+            '::1/128',
+            'fc00::/7',
+            'fe80::/10'
+        ];
+
+        foreach ($blockedRanges as $range) {
+            if (self::ipInRange($ip, $range)) return false;
+        }
+
+        return true;
+    }
+
     // Cloudflare IPv4 ranges (Updated frequently by CF, these are standard static ones)
     private static $cfIpsV4 = [
         '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
@@ -189,12 +278,12 @@ class ProxySecurity {
     /**
      * Create a Proxy Mapping
      */
-    public static function createProxyMapping($originalUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint) {
+    public static function createProxyMapping($originalUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint, $isPlaylist = false) {
         global $db;
         if (!$db) $db = getDB();
 
         $rid = bin2hex(random_bytes(16));
-        $expirySeconds = PROXY_EXPIRE_SECONDS;
+        $expirySeconds = $isPlaylist ? PLAYLIST_SIGNED_TTL : SEGMENT_SIGNED_TTL;
         $expiresAt = date('Y-m-d H:i:s', time() + $expirySeconds);
 
         $stmt = $db->prepare("INSERT INTO proxy_mappings (rid, user_id, original_url, ip_prefix, ua_hash, device_fingerprint, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
@@ -217,8 +306,8 @@ class ProxySecurity {
     /**
      * Build Signed Proxy URL
      */
-    public static function buildProxyUrl($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash) {
-        $expiry = time() + PROXY_EXPIRE_SECONDS;
+    public static function buildProxyUrl($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash, $isPlaylist = false) {
+        $expiry = time() + ($isPlaylist ? PLAYLIST_SIGNED_TTL : SEGMENT_SIGNED_TTL);
         $sig = self::generateHmac($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash, $expiry);
 
         $proxyUrl = SECURE_PANEL_URL . '/proxy/asset.php' .
@@ -273,8 +362,8 @@ class ProxySecurity {
                 // Rewrite URI="..." attributes
                 $line = preg_replace_callback('/URI="([^"]+)"/', function($matches) use ($resolveUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint) {
                     $originalUrl = $resolveUrl($matches[1]);
-                    $rid = self::createProxyMapping($originalUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint);
-                    $proxyUrl = self::buildProxyUrl($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash);
+                    $isChildList = (strpos($originalUrl, ".m3u") !== false); $rid = self::createProxyMapping($originalUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint, $isChildList);
+                    $proxyUrl = self::buildProxyUrl($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash, $isChildList);
                     return 'URI="' . $proxyUrl . '"';
                 }, $line);
                 $output[] = $line;
@@ -284,8 +373,8 @@ class ProxySecurity {
             } else {
                 // It's a URL (segment, stream, child playlist)
                 $originalUrl = $resolveUrl($line);
-                $rid = self::createProxyMapping($originalUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint);
-                $proxyUrl = self::buildProxyUrl($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash);
+                $isChildList = (strpos($originalUrl, ".m3u") !== false); $rid = self::createProxyMapping($originalUrl, $uid, $ipPrefix, $uaHash, $deviceFingerprint, $isChildList);
+                $proxyUrl = self::buildProxyUrl($rid, $uid, $deviceFingerprint, $ipPrefix, $uaHash, $isChildList);
                 $output[] = $proxyUrl;
             }
         }

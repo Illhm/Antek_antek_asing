@@ -7,7 +7,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PHP_UPLOAD_MAX_FILESIZE=64M \
     PHP_POST_MAX_SIZE=64M \
     ADMIN_USERNAME=admin \
-    ADMIN_PASSWORD=1
+    ADMIN_PASSWORD=1 \
+    ADMIN_ROLE=superadmin \
+    TIMEZONE=Asia/Jakarta \
+    MAX_CONCURRENT_STREAMS_PER_USER=1 \
+    STREAM_SESSION_POLICY=block_new \
+    STREAM_IDLE_TIMEOUT=90 \
+    STREAM_SESSION_MAX_AGE=21600 \
+    PLAYLIST_SIGNED_TTL=120 \
+    SEGMENT_SIGNED_TTL=60 \
+    IP_BIND_MODE=soft \
+    STRICT_CLIENT_BINDING=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -19,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev \
     libonig-dev \
     ffmpeg \
-    && docker-php-ext-install -j"$(nproc)" pdo_sqlite sqlite3 mysqli curl mbstring zip \
+    && docker-php-ext-install -j"$(nproc)" pdo_sqlite sqlite3 curl mbstring zip \
     && a2dismod -f mpm_event mpm_worker >/dev/null 2>&1 || true
 
 RUN a2enmod mpm_prefork rewrite headers expires remoteip >/dev/null 2>&1 \
